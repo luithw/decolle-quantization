@@ -14,25 +14,40 @@ import torch
 import numpy as np
 
 from pyhessian.hessian import hessian
-from pyhessian.utils import group_product, get_params_grad, hessian_vector_product
+from pyhessian.utils import group_product, hessian_vector_product
 
 
-def group_mean(xs, axis=None):
+def get_params_grad(model):
     """
-    the mean of each element of xs
-    :param xs:
-    :return:
+    get model parameters and corresponding gradients
     """
-    if axis is not None:
-        return [np.mean(x, axis=axis) for x in xs]
-    else:
-        return [np.mean(x) for x in xs]
+    params = []
+    grads = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad or 'bias' in name:
+            continue
+        params.append(param)
+        grads.append(0. if param.grad is None else param.grad + 0.)
+    return params, grads
 
 
 class SSN_Hessian(hessian):
     """
     The class extends the hessian class form PyHessian and allows computation of layer wise SNN Hessian:
     """
+
+    def __init__(self, model, criterion, data=None, dataloader=None, cuda=True):
+        """
+        model: the model that needs Hessain information
+        criterion: the loss function
+        data: a single batch of data, including inputs and its corresponding labels
+        dataloader: the data loader including bunch of batches of data
+        """
+        super().__init__(model, criterion, data, dataloader, cuda)
+        # this step is used to extract the parameters from the model, using our modified function.
+        params, gradsH = get_params_grad(self.model)
+        self.params = params
+        self.gradsH = gradsH  # gradient used for Hessian computation
 
     def dataloader_hv_product(self, v):
         device = self.device
@@ -42,17 +57,17 @@ class SSN_Hessian(hessian):
         for i, (inputs, targets) in enumerate(self.data):
             self.model.zero_grad()
             inputs = inputs.to(device)
+            targets = targets.to(device)
             tmp_num_data = inputs.size(0)
             burnin = 50
             self.model.init(inputs, burnin=burnin)
             t_sample = inputs.shape[1]
-            loss_tv = torch.tensor(0.).to(device)
+            loss_mask = (targets.sum(2)>0).unsqueeze(2).float().to(device)
             for t in (range(burnin, t_sample)):
                 Sin_t = inputs[:, t]
-                s_out, r_out, u_out =  self.model.step(Sin_t)
-                for r in r_out:
-                    loss_tv += self.criterion(r, targets[:, t].to(device))
-                loss_tv.backward(create_graph=True)
+                s, r, u = self.model.step(Sin_t)
+                loss_ = self.criterion(s, r, u, target=targets[:,t,:], mask = loss_mask[:,t,:], sum_ = False)
+                sum(loss_).backward(create_graph=True)
                 params, gradsH = get_params_grad(self.model)
                 self.model.zero_grad()
                 Hv = torch.autograd.grad(gradsH,
@@ -64,7 +79,6 @@ class SSN_Hessian(hessian):
                     THv1 + Hv1 * float(tmp_num_data) + 0.
                     for THv1, Hv1 in zip(THv, Hv)
                 ]
-                loss_tv = torch.tensor(0.).to(device)
             num_data += float(tmp_num_data)
         THv = [THv1 / float(num_data) for THv1 in THv]
         eigenvalue = group_product(THv, v).cpu().item()
@@ -89,13 +103,15 @@ class SSN_Hessian(hessian):
             # generate Rademacher random variables
             for v_i in v:
                 v_i[v_i == 0] = -1
+
             if self.full_dataset:
                 _, Hv = self.dataloader_hv_product(v)
             else:
                 Hv = hessian_vector_product(self.gradsH, self.params, v)
             _trace_vhv = [torch.sum(x * y).cpu().item() for (x, y) in zip(Hv, v)]
-            if abs(np.mean(group_mean(trace_vhv)) - trace) / (trace + 1e-6) < tol:
-                return group_mean(trace_vhv, axis=0)
+            trace_vhv.append(_trace_vhv)
+            if abs(np.mean(trace_vhv) - trace) / (trace + 1e-6) < tol:
+                return np.mean(trace_vhv, axis=0)
             else:
-                trace = np.mean(group_mean(trace_vhv))
-        return group_mean(trace_vhv, axis=0)
+                trace = np.mean(trace_vhv)
+        return np.mean(trace_vhv, axis=0)

@@ -247,8 +247,8 @@ def get_activities(gen_train, decolle_loss, net, opt, epoch, burnin, online_upda
             s_hist.append([tonp(x) for x in s]) 
             r_hist.append([tonp(x) for x in r]) 
             u_hist.append([tonp(x) for x in u]) 
-            loss_tv += decolle_loss(s, r, u, target=target_batch[:,k,:], mask = loss_mask[:,k,:]) 
-            if online_update:  
+            loss_tv += decolle_loss(s, r, u, target=target_batch[:,k,:], mask = loss_mask[:,k,:])
+            if online_update:
                 loss_tv.backward() 
                 if apply_grad: opt.step() 
                 opt.zero_grad() 

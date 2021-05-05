@@ -133,41 +133,39 @@ if args.verbose:
 print('\n------Starting training with {} DECOLLE layers-------'.format(len(net)))
 
 # --------TRAINING LOOP----------
-test_acc_hist = []
-for e in range(starting_epoch , params['num_epochs'] ):
-    interval = e // params['lr_drop_interval']
-    lr = opt.param_groups[-1]['lr']
-    print("lr: %r" % lr)
-    if interval > 0:
-        print('Changing learning rate from {} to {}'.format(lr, opt.param_groups[-1]['lr']))
-        opt.param_groups[-1]['lr'] = np.array(params['learning_rate']) / (interval * params['lr_drop_factor'])
-    else:
-        print('Changing learning rate from {} to {}'.format(lr, opt.param_groups[-1]['lr']))
-        opt.param_groups[-1]['lr'] = np.array(params['learning_rate'])
+if not args.no_train:
+    test_acc_hist = []
+    for e in range(starting_epoch , params['num_epochs'] ):
+        interval = e // params['lr_drop_interval']
+        lr = opt.param_groups[-1]['lr']
+        print("lr: %r" % lr)
+        if interval > 0:
+            print('Changing learning rate from {} to {}'.format(lr, opt.param_groups[-1]['lr']))
+            opt.param_groups[-1]['lr'] = np.array(params['learning_rate']) / (interval * params['lr_drop_factor'])
+        else:
+            print('Changing learning rate from {} to {}'.format(lr, opt.param_groups[-1]['lr']))
+            opt.param_groups[-1]['lr'] = np.array(params['learning_rate'])
 
-    if (e % params['test_interval']) == 0 and e!=0:
-        print('---------------Epoch {}-------------'.format(e))
-        if not args.no_save:
-            print('---------Saving checkpoint---------')
-            save_checkpoint(e, checkpoint_dir, net, opt)
+        if (e % params['test_interval']) == 0 and e!=0:
+            print('---------------Epoch {}-------------'.format(e))
+            if not args.no_save:
+                print('---------Saving checkpoint---------')
+                save_checkpoint(e, checkpoint_dir, net, opt)
 
-        smoothl1 = torch.nn.SmoothL1Loss()
-        hessian_comp = SSN_Hessian(net,
-                                   smoothl1,
-                                   dataloader=gen_train,
-                                   cuda=args.device == "cuda")
-        trace = hessian_comp.trace(maxIter=10, tol=1e-2)
-        print("Trace: %r" % trace)
+            test_loss, test_acc = test(gen_test, decolle_loss, net, params['burnin_steps'], print_error = True)
+            test_acc_hist.append(test_acc)
 
-        test_loss, test_acc = test(gen_test, decolle_loss, net, params['burnin_steps'], print_error = True)
-        test_acc_hist.append(test_acc)
+            if not args.no_save:
+                write_stats(e, test_acc, test_loss, writer)
+                np.save(log_dir+'/test_acc.npy', np.array(test_acc_hist),)
 
-        if not args.no_save:
-            write_stats(e, test_acc, test_loss, writer)
-            np.save(log_dir+'/test_acc.npy', np.array(test_acc_hist),)
-
-    if not args.no_train:
         total_loss, act_rate = train(gen_train, decolle_loss, net, opt, e, params['burnin_steps'], online_update=params['online_update'])
         if not args.no_save:
             for i in range(len(net)):
                 writer.add_scalar('/act_rate/{0}'.format(i), act_rate[i], e)
+hessian_comp = SSN_Hessian(net,
+                           decolle_loss,
+                           dataloader=gen_test,
+                           cuda=args.device == "cuda")
+trace = hessian_comp.trace(maxIter=10)
+print("Trace: %r" % trace)

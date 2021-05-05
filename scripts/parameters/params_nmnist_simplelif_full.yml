@@ -30,7 +30,7 @@ loss: smoothL1
 lr_drop_factor: 5
 lr_drop_interval: 30
 num_layers: 3
-num_epochs: 100
+num_epochs: 20
 num_conv_layers: 3
 num_mlp_layers: 0
 num_dl_workers: 4
